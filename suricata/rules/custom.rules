@@ -1,0 +1,110 @@
+# ============================================
+# Custom Suricata Rules — SOC Lab
+# Coverage:  SQL Injection, XSS, Directory Traversal,
+#            Port Scanning, DDoS, Command Injection
+# ============================================
+
+# ----- Rule 1: SQL Injection in HTTP URI -----
+alert http $EXTERNAL_NET any -> $HTTP_SERVERS $HTTP_PORTS (                \
+    msg:"SOCLAB - SQL Injection attempt in URI";                           \
+    flow:to_server,established;                                            \
+    content:"SELECT"; nocase; http_uri;                                    \
+    pcre:"/(?:UNION\s+SELECT|OR\s+1\s*=\s*1|AND\s+1\s*=\s*1|'\s*OR\s*'|CONCAT\s*\(|INFORMATION_SCHEMA)/Ui"; \
+    classtype:web-application-attack;                                      \
+    sid:1000001; rev:1;                                                    \
+)
+
+# ----- Rule 2: SQL Injection in HTTP Request Body -----
+alert http $EXTERNAL_NET any -> $HTTP_SERVERS $HTTP_PORTS (                \
+    msg:"SOCLAB - SQL Injection attempt in POST body";                     \
+    flow:to_server,established;                                            \
+    content:"POST"; http_method;                                           \
+    pcre:"/(?:UNION\s+SELECT|OR\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d|DROP\s+TABLE|INSERT\s+INTO|UPDATE\s+.*\s+SET)/Ui"; \
+    http_client_body;                                                      \
+    classtype:web-application-attack;                                      \
+    sid:1000002; rev:1;                                                    \
+)
+
+# ----- Rule 3: XSS — Script tag in request -----
+alert http $EXTERNAL_NET any -> $HTTP_SERVERS $HTTP_PORTS (                \
+    msg:"SOCLAB - Cross-Site Scripting (XSS) script tag detected";         \
+    flow:to_server,established;                                            \
+    content:"<script"; nocase;                                             \
+    pcre:"/<script[^>]*>/i";                                               \
+    classtype:web-application-attack;                                      \
+    sid:1000003; rev:1;                                                    \
+)
+
+# ----- Rule 4: XSS — Event handler attribute -----
+alert http $EXTERNAL_NET any -> $HTTP_SERVERS $HTTP_PORTS (                \
+    msg:"SOCLAB - XSS event handler (onerror/onload/onmouseover)";         \
+    flow:to_server,established;                                            \
+    pcre:"/(?:onerror|onload|onmouseover|onfocus|onclick)\s*=/i";          \
+    classtype:web-application-attack;                                      \
+    sid:1000004; rev:1;                                                    \
+)
+
+# ----- Rule 5: Directory Traversal -----
+alert http $EXTERNAL_NET any -> $HTTP_SERVERS $HTTP_PORTS (                \
+    msg:"SOCLAB - Directory traversal attempt (../)";                      \
+    flow:to_server,established;                                            \
+    content:".."; http_uri;                                                \
+    pcre:"/(?:\.\.\/|\.\.\\\\|%2e%2e%2f|%2e%2e\/|\.\.%2f|%252e%252e)/i";  \
+    classtype:web-application-attack;                                      \
+    sid:1000005; rev:1;                                                    \
+)
+
+# ----- Rule 6: /etc/passwd access attempt -----
+alert http $EXTERNAL_NET any -> $HTTP_SERVERS $HTTP_PORTS (                \
+    msg:"SOCLAB - Attempt to access /etc/passwd";                          \
+    flow:to_server,established;                                            \
+    content:"/etc/passwd"; nocase;                                         \
+    classtype:web-application-attack;                                      \
+    sid:1000006; rev:1;                                                    \
+)
+
+# ----- Rule 7: Remote File Inclusion (RFI) -----
+alert http $EXTERNAL_NET any -> $HTTP_SERVERS $HTTP_PORTS (                \
+    msg:"SOCLAB - Remote File Inclusion (RFI) via http://";                \
+    flow:to_server,established;                                            \
+    content:"http://"; http_uri;                                           \
+    pcre:"/(?:file|page|include|path|url)\s*=\s*https?:\/\//Ui";          \
+    classtype:web-application-attack;                                      \
+    sid:1000007; rev:1;                                                    \
+)
+
+# ----- Rule 8: Port Scan Detection (threshold) -----
+alert tcp $EXTERNAL_NET any -> $HOME_NET any (                             \
+    msg:"SOCLAB - Possible port scan detected";                            \
+    flags:S;                                                               \
+    threshold:type both, track by_src, count 25, seconds 10;               \
+    classtype:attempted-recon;                                             \
+    sid:1000008; rev:1;                                                    \
+)
+
+# ----- Rule 9: HTTP Flood / DDoS Simulation -----
+alert http $EXTERNAL_NET any -> $HTTP_SERVERS $HTTP_PORTS (                \
+    msg:"SOCLAB - HTTP Flood detected (high request rate)";                \
+    flow:to_server,established;                                            \
+    threshold:type both, track by_src, count 100, seconds 10;              \
+    classtype:attempted-dos;                                               \
+    sid:1000009; rev:1;                                                    \
+)
+
+# ----- Rule 10: Known scanner User-Agent -----
+alert http $EXTERNAL_NET any -> $HTTP_SERVERS $HTTP_PORTS (                \
+    msg:"SOCLAB - Known scanning tool (User-Agent)";                       \
+    flow:to_server,established;                                            \
+    pcre:"/(?:nikto|sqlmap|nmap|dirbuster|gobuster|wfuzz|hydra|masscan)/Hi"; \
+    classtype:web-application-attack;                                      \
+    sid:1000010; rev:1;                                                    \
+)
+
+# ----- Rule 11: Command Injection -----
+alert http $EXTERNAL_NET any -> $HTTP_SERVERS $HTTP_PORTS (                \
+    msg:"SOCLAB - OS Command Injection attempt";                           \
+    flow:to_server,established;                                            \
+    pcre:"/(?:;\s*(?:cat|ls|whoami|id|uname|wget|curl|nc|bash|sh)\b|`[^`]+`|\$\([^)]+\))/i"; \
+    classtype:web-application-attack;                                      \
+    sid:1000011; rev:1;                                                    \
+)

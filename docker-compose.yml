@@ -1,0 +1,159 @@
+# ============================================
+# Integrated SOC Lab - Docker Compose
+# ============================================
+# Services:
+#   splunk     - Splunk Enterprise 9.x (SIEM)
+#   web        - Apache 2.4 + ModSecurity WAF + PHP
+#   suricata   - Suricata 6.x NIDS
+#   forwarder  - Splunk Universal Forwarder
+#   attacker   - Python Attack Simulator
+#   webhook    - Flask-based mock SOAR endpoint
+# ============================================
+
+services:
+
+  # =========================================
+  # Splunk Enterprise — Central SIEM
+  # =========================================
+  splunk:
+    image: splunk/splunk:9.1
+    container_name: soc-splunk
+    hostname: splunk
+    environment:
+      - SPLUNK_START_ARGS=${SPLUNK_START_ARGS}
+      - SPLUNK_PASSWORD=${SPLUNK_PASSWORD}
+      - SPLUNK_HEC_SSL=false
+      - SPLUNK_HEC_TOKEN=${SPLUNK_HEC_TOKEN}
+    ports:
+      - "8000:8000"   # Splunk Web UI
+      - "8088:8088"   # HTTP Event Collector
+      - "9997:9997"   # Forwarder receiving port
+    volumes:
+      - splunk-data:/opt/splunk/var
+      - ./splunk/dashboards:/opt/splunk/etc/apps/soc_lab/local/data/ui/views
+      - ./splunk/app.conf:/opt/splunk/etc/apps/soc_lab/default/app.conf
+    networks:
+      soc-net:
+        ipv4_address: 172.20.0.10
+    restart: unless-stopped
+
+  # =========================================
+  # Apache + ModSecurity WAF — Target Web App
+  # =========================================
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: soc-web
+    hostname: webserver
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    volumes:
+      - apache-logs:/var/log/apache2
+      - modsec-logs:/var/log/modsec
+    networks:
+      soc-net:
+        ipv4_address: 172.20.0.20
+    restart: unless-stopped
+
+  # =========================================
+  # Suricata NIDS — Network Intrusion Detection
+  # =========================================
+  suricata:
+    image: jasonish/suricata:6.0
+    container_name: soc-suricata
+    hostname: suricata
+    network_mode: "host"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_NICE
+    volumes:
+      - ./suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
+      - ./suricata/rules:/var/lib/suricata/rules:ro
+      - suricata-logs:/var/log/suricata
+    command: >
+      -i docker0
+      --set vars.address-groups.HOME_NET="[172.20.0.0/16]"
+    restart: unless-stopped
+
+  # =========================================
+  # Splunk Universal Forwarder — Log Shipper
+  # =========================================
+  forwarder:
+    image: splunk/universalforwarder:9.1
+    container_name: soc-forwarder
+    hostname: forwarder
+    environment:
+      - SPLUNK_START_ARGS=${SPLUNK_START_ARGS}
+      - SPLUNK_PASSWORD=${SPLUNK_PASSWORD}
+      - SPLUNK_FORWARD_SERVER=splunk:9997
+    volumes:
+      - apache-logs:/var/log/apache2:ro
+      - modsec-logs:/var/log/modsec:ro
+      - suricata-logs:/var/log/suricata:ro
+      - ./splunk/inputs.conf:/opt/splunkforwarder/etc/system/local/inputs.conf:ro
+      - ./splunk/props.conf:/opt/splunkforwarder/etc/system/local/props.conf:ro
+      - ./splunk/transforms.conf:/opt/splunkforwarder/etc/system/local/transforms.conf:ro
+    depends_on:
+      - splunk
+      - web
+      - suricata
+    networks:
+      soc-net:
+        ipv4_address: 172.20.0.30
+    restart: unless-stopped
+
+  # =========================================
+  # Python Attack Simulator — Red Team Agent
+  # =========================================
+  attacker:
+    build:
+      context: ./attacker
+      dockerfile: Dockerfile
+    container_name: soc-attacker
+    hostname: attacker
+    depends_on:
+      - web
+    environment:
+      - TARGET_URL=http://172.20.0.20
+    networks:
+      soc-net:
+        ipv4_address: 172.20.0.50
+    restart: "no"
+
+  # =========================================
+  # Webhook Receiver — Mock SOAR Endpoint
+  # =========================================
+  webhook:
+    build:
+      context: ./webhook
+      dockerfile: Dockerfile
+    container_name: soc-webhook
+    hostname: webhook
+    ports:
+      - "${WEBHOOK_PORT:-5000}:5000"
+    networks:
+      soc-net:
+        ipv4_address: 172.20.0.60
+    restart: unless-stopped
+
+# =========================================
+# Networks
+# =========================================
+networks:
+  soc-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1
+
+# =========================================
+# Volumes
+# =========================================
+volumes:
+  splunk-data:
+  apache-logs:
+  modsec-logs:
+  suricata-logs:

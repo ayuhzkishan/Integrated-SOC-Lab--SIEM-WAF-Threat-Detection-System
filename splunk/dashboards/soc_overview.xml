@@ -1,0 +1,282 @@
+<dashboard version="1.1" theme="dark">
+  <label>SOC Lab — Threat Overview Dashboard</label>
+  <description>Real-time security monitoring across WAF, NIDS, and Web Server layers</description>
+
+  <!-- ========== ROW 1: KPI Panels ========== -->
+  <row>
+    <panel>
+      <title>🔴 Total Attacks (Last 24h)</title>
+      <single>
+        <search>
+          <query>
+            (sourcetype="modsec:audit" OR sourcetype="suricata:eve" event_type="alert")
+            earliest=-24h latest=now
+            | stats count as total_attacks
+          </query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="rangeColors">["0x22c55e","0xf59e0b","0xef4444"]</option>
+        <option name="rangeValues">[50,200]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <title>🛡️ WAF Blocks (Last 24h)</title>
+      <single>
+        <search>
+          <query>
+            sourcetype="modsec:audit" modsec_action="Intercepted"
+            earliest=-24h latest=now
+            | stats count as waf_blocks
+          </query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="rangeColors">["0x22c55e","0xf59e0b","0xef4444"]</option>
+        <option name="rangeValues">[20,100]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <title>🔍 NIDS Alerts (Last 24h)</title>
+      <single>
+        <search>
+          <query>
+            sourcetype="suricata:eve" event_type="alert"
+            earliest=-24h latest=now
+            | stats count as nids_alerts
+          </query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="rangeColors">["0x22c55e","0xf59e0b","0xef4444"]</option>
+        <option name="rangeValues">[30,150]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <title>🌐 Unique Source IPs</title>
+      <single>
+        <search>
+          <query>
+            (sourcetype="apache:access" OR sourcetype="suricata:eve")
+            earliest=-24h latest=now
+            | stats dc(src_ip) as unique_ips
+          </query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+      </single>
+    </panel>
+  </row>
+
+  <!-- ========== ROW 2: Timeline ========== -->
+  <row>
+    <panel>
+      <title>📈 Attack Timeline — All Sources</title>
+      <chart>
+        <search>
+          <query>
+            (sourcetype="modsec:audit" OR sourcetype="suricata:eve" event_type="alert")
+            earliest=-24h latest=now
+            | eval source_layer=case(
+                sourcetype=="modsec:audit", "WAF (ModSecurity)",
+                sourcetype=="suricata:eve", "NIDS (Suricata)"
+              )
+            | timechart span=5m count by source_layer
+          </query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="charting.chart.nullValueMode">zero</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- ========== ROW 3: Top Attackers & Attack Types ========== -->
+  <row>
+    <panel>
+      <title>🎯 Top 10 Attacking IPs</title>
+      <table>
+        <search>
+          <query>
+            (sourcetype="modsec:audit" OR sourcetype="suricata:eve" event_type="alert")
+            earliest=-24h latest=now
+            | stats count as attack_count dc(sourcetype) as layers_triggered values(sourcetype) as sources by src_ip
+            | sort -attack_count
+            | head 10
+            | rename src_ip as "Source IP", attack_count as "Attacks", layers_triggered as "Layers Hit", sources as "Detection Sources"
+          </query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">row</option>
+        <option name="count">10</option>
+      </table>
+    </panel>
+    <panel>
+      <title>📊 Attack Categories (WAF)</title>
+      <chart>
+        <search>
+          <query>
+            sourcetype="modsec:audit"
+            earliest=-24h latest=now
+            | rex field=_raw "\[msg\s+\"(?P&lt;attack_type&gt;[^\"]+)\"\]"
+            | eval attack_category=case(
+                match(attack_type, "(?i)sql"), "SQL Injection",
+                match(attack_type, "(?i)xss|cross.site"), "XSS",
+                match(attack_type, "(?i)rfi|remote.file"), "RFI",
+                match(attack_type, "(?i)lfi|local.file|traversal"), "LFI / Traversal",
+                match(attack_type, "(?i)rce|command|exec"), "Command Injection",
+                match(attack_type, "(?i)scanner|scan"), "Scanner Detection",
+                match(attack_type, "(?i)brute|login"), "Brute Force",
+                1==1, "Other"
+              )
+            | stats count by attack_category
+            | sort -count
+          </query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.chart.showPercent">1</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- ========== ROW 4: WAF Rules & NIDS Signatures ========== -->
+  <row>
+    <panel>
+      <title>🛡️ Top WAF Rules Triggered</title>
+      <table>
+        <search>
+          <query>
+            sourcetype="modsec:audit"
+            earliest=-24h latest=now
+            | rex field=_raw "\[id\s+\"?(?P&lt;rule_id&gt;\d+)\"?\]"
+            | rex field=_raw "\[msg\s+\"(?P&lt;rule_msg&gt;[^\"]+)\"\]"
+            | rex field=_raw "\[severity\s+\"?(?P&lt;severity&gt;\w+)\"?\]"
+            | stats count as hits by rule_id rule_msg severity
+            | sort -hits
+            | head 15
+            | rename rule_id as "Rule ID", rule_msg as "Description", severity as "Severity", hits as "Hits"
+          </query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="count">15</option>
+      </table>
+    </panel>
+    <panel>
+      <title>🔍 Top Suricata Signatures</title>
+      <table>
+        <search>
+          <query>
+            sourcetype="suricata:eve" event_type="alert"
+            earliest=-24h latest=now
+            | stats count as hits by alert.signature alert.severity alert.category
+            | sort -hits
+            | head 15
+            | rename alert.signature as "Signature", alert.severity as "Severity", alert.category as "Category", hits as "Hits"
+          </query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="count">15</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ========== ROW 5: Cross-Layer Correlation ========== -->
+  <row>
+    <panel>
+      <title>🔗 Cross-Layer Correlation — IPs Flagged by BOTH WAF and NIDS</title>
+      <table>
+        <search>
+          <query>
+            (sourcetype="modsec:audit" OR sourcetype="suricata:eve" event_type="alert")
+            earliest=-24h latest=now
+            | stats
+                count(eval(sourcetype=="modsec:audit")) as waf_hits
+                count(eval(sourcetype=="suricata:eve")) as nids_hits
+                values(eval(if(sourcetype=="modsec:audit", modsec_msg, null()))) as waf_rules
+                values(eval(if(sourcetype=="suricata:eve", 'alert.signature', null()))) as nids_sigs
+                by src_ip
+            | where waf_hits > 0 AND nids_hits > 0
+            | sort -(waf_hits + nids_hits)
+            | rename src_ip as "Attacker IP", waf_hits as "WAF Hits", nids_hits as "NIDS Hits", waf_rules as "WAF Rules Matched", nids_sigs as "NIDS Signatures"
+          </query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="count">10</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ========== ROW 6: WAF Efficacy ========== -->
+  <row>
+    <panel>
+      <title>✅ WAF Block Rate — Blocked vs Allowed</title>
+      <chart>
+        <search>
+          <query>
+            sourcetype="modsec:audit"
+            earliest=-24h latest=now
+            | eval action=if(match(_raw, "Action:\s*Intercepted"), "Blocked", "Allowed")
+            | stats count by action
+          </query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.chart.showPercent">1</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>📊 HTTP Response Code Distribution</title>
+      <chart>
+        <search>
+          <query>
+            sourcetype="apache:access"
+            earliest=-24h latest=now
+            | eval status_group=case(
+                status &gt;= 200 AND status &lt; 300, "2xx Success",
+                status &gt;= 300 AND status &lt; 400, "3xx Redirect",
+                status &gt;= 400 AND status &lt; 500, "4xx Client Error",
+                status &gt;= 500, "5xx Server Error"
+              )
+            | stats count by status_group
+          </query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>⏱️ Attacks per Minute (Last 1h)</title>
+      <chart>
+        <search>
+          <query>
+            (sourcetype="modsec:audit" OR sourcetype="suricata:eve" event_type="alert")
+            earliest=-1h latest=now
+            | timechart span=1m count
+          </query>
+          <earliest>-1h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.chart.nullValueMode">zero</option>
+      </chart>
+    </panel>
+  </row>
+
+</dashboard>

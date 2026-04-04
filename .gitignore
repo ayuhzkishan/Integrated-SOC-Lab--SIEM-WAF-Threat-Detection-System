@@ -1,0 +1,8 @@
+.env
+splunk-data/
+__pycache__/
+*.pyc
+*.log
+.DS_Store
+docs/screenshots/*.png
+docs/screenshots/*.jpg
