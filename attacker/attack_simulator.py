@@ -463,7 +463,8 @@ def wait_for_target():
 
     for attempt in range(30):
         try:
-            resp = requests.get(f"{TARGET_URL}/", timeout=5)
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            resp = requests.get(f"{TARGET_URL}/", timeout=5, headers=headers)
             if resp.status_code == 200:
                 logger.info(f"{Fore.GREEN}Target is READY at {TARGET_URL}")
                 return True

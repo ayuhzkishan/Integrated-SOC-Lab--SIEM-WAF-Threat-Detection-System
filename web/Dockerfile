@@ -36,8 +36,10 @@ RUN echo 'LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\
     echo 'ErrorLog /var/log/apache2/error.log' >> /etc/apache2/conf-enabled/logging.conf && \
     echo 'CustomLog /var/log/apache2/access.log combined' >> /etc/apache2/conf-enabled/logging.conf
 
-# Create log dirs
+# Create log dirs and BREAK the stdout symlinks so logs go to real files
 RUN mkdir -p /var/log/apache2 /var/log/modsec && \
+    rm -f /var/log/apache2/access.log /var/log/apache2/error.log /var/log/apache2/other_vhosts_access.log && \
+    touch /var/log/apache2/access.log /var/log/apache2/error.log /var/log/apache2/other_vhosts_access.log && \
     chown -R www-data:www-data /var/log/apache2 /var/log/modsec
 
 # ---- Deploy Vulnerable Application ----

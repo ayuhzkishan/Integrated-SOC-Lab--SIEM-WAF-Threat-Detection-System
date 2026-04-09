@@ -19,6 +19,7 @@
 - [Quick Start](#-quick-start)
 - [Attack Simulation](#-attack-simulation)
 - [Splunk Dashboard](#-splunk-dashboard)
+- [Automated Alerts & SOAR](#-automated-alerts--soar)
 - [Custom Detection Rules](#-custom-detection-rules)
 - [Incident Response Playbook](#-incident-response-playbook)
 - [Directory Structure](#-directory-structure)
@@ -128,7 +129,17 @@ docker compose up -d --build
 docker compose run --rm attacker
 ```
 
-### 6. View Results
+### 6. Push Logs (Fallback)
+If the Universal Forwarder has trouble seeing shared Docker volumes, use the HEC pusher:
+```bash
+# One-shot push
+python push_logs_to_splunk.py
+
+# Continuous watch mode (polls every 10s)
+python push_logs_to_splunk.py --watch
+```
+
+### 7. View Results
 1. Open Splunk at `http://localhost:8000`
 2. Navigate to **SOC Lab** app → **SOC Overview Dashboard**
 3. Watch real-time attack data populate the panels
@@ -190,6 +201,25 @@ The `soc_overview.xml` dashboard provides **6 rows of real-time security visibil
 
 ---
 
+## 🚨 Automated Alerts & SOAR
+
+The lab ships with **5 pre-configured Splunk saved searches** (`splunk/savedsearches.conf`) that trigger webhook alerts:
+
+| Alert Name | Severity | Trigger Condition | Schedule |
+|---|---|---|---|
+| **WAF Mass Block** | 🔴 CRITICAL | 10+ ModSec blocks from single IP in 60s | Every 1 min |
+| **Suricata Alert Burst** | 🟠 HIGH | 5+ NIDS alerts from single IP in 2 min | Every 2 min |
+| **Brute Force Login** | 🟠 HIGH | 15+ POST /login.php from single IP in 2 min | Every 2 min |
+| **Cross-Layer Correlation** | 🟡 MEDIUM | Same IP flagged by both WAF and NIDS | Every 5 min |
+| **Threat Intel Match** | 🟠 HIGH | Traffic from AbuseIPDB-listed IP | Every 15 min |
+
+All alerts send a `POST` to the Flask webhook receiver at `http://172.20.0.60:5000/webhook/splunk`, which:
+1. Parses severity and source IP
+2. Simulates a Slack/PagerDuty notification
+3. Stores alert history queryable at `GET /alerts`
+
+---
+
 ## 📒 Incident Response Playbook
 
 See [`docs/incident_playbook.md`](docs/incident_playbook.md) for:
@@ -205,7 +235,9 @@ See [`docs/incident_playbook.md`](docs/incident_playbook.md) for:
 ```
 .
 ├── docker-compose.yml          # Orchestrates all 6 services
-├── .env                        # Secrets & configurable values
+├── .env                        # Secrets & configurable values (gitignored)
+├── .env.example                # Template for .env
+├── push_logs_to_splunk.py      # HEC log pusher (fallback + watch mode)
 ├── README.md
 ├── PROJECT_PLAN.md
 │
@@ -240,6 +272,7 @@ See [`docs/incident_playbook.md`](docs/incident_playbook.md) for:
 │   ├── inputs.conf
 │   ├── props.conf
 │   ├── transforms.conf
+│   ├── savedsearches.conf      # 5 automated alert workflows
 │   └── dashboards/
 │       └── soc_overview.xml    # 6-row threat dashboard
 │
@@ -266,6 +299,7 @@ See [`docs/incident_playbook.md`](docs/incident_playbook.md) for:
 | MITRE ATT&CK Techniques Covered | 5 |
 | Custom WAF Rules | 6 |
 | Custom NIDS Rules | 11 |
+| Splunk Automated Alerts | 5 |
 | Attack Modules | 7 |
 | Log Sources Correlated | 4 |
 | Alert Severity Tiers | 4 (P1–P4) |

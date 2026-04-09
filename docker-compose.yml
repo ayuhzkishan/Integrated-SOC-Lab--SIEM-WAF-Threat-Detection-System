@@ -32,9 +32,16 @@ services:
       - splunk-data:/opt/splunk/var
       - ./splunk/dashboards:/opt/splunk/etc/apps/soc_lab/local/data/ui/views
       - ./splunk/app.conf:/opt/splunk/etc/apps/soc_lab/default/app.conf
+      - ./splunk/savedsearches.conf:/opt/splunk/etc/apps/soc_lab/local/savedsearches.conf
     networks:
       soc-net:
         ipv4_address: 172.20.0.10
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
     restart: unless-stopped
 
   # =========================================
@@ -69,8 +76,8 @@ services:
       - NET_RAW
       - SYS_NICE
     volumes:
-      - ./suricata/suricata.yaml:/etc/suricata/suricata.yaml:ro
-      - ./suricata/rules:/var/lib/suricata/rules:ro
+      - ./suricata/suricata.yaml:/etc/suricata/suricata.yaml
+      - ./suricata/rules:/var/lib/suricata/rules
       - suricata-logs:/var/log/suricata
     command: >
       -i docker0
@@ -96,9 +103,12 @@ services:
       - ./splunk/props.conf:/opt/splunkforwarder/etc/system/local/props.conf:ro
       - ./splunk/transforms.conf:/opt/splunkforwarder/etc/system/local/transforms.conf:ro
     depends_on:
-      - splunk
-      - web
-      - suricata
+      splunk:
+        condition: service_healthy
+      web:
+        condition: service_started
+      suricata:
+        condition: service_started
     networks:
       soc-net:
         ipv4_address: 172.20.0.30
@@ -114,7 +124,8 @@ services:
     container_name: soc-attacker
     hostname: attacker
     depends_on:
-      - web
+      web:
+        condition: service_started
     environment:
       - TARGET_URL=http://172.20.0.20
     networks:
