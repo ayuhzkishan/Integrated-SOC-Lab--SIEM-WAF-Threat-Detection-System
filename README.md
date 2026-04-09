@@ -44,10 +44,10 @@
 │         ▼                                │ modsec_audit.log  │
 │  ┌──────────────┐                        ▼                   │
 │  │   Suricata   │              ┌──────────────────┐          │
-│  │    NIDS      │              │  Splunk Universal │          │
-│  │  (docker0)   ├─ eve.json ──►│    Forwarder     │          │
+│  │    NIDS      │              │   HEC Watcher    │          │
+│  │    (eth0)    ├─ eve.json ──►│   (Sidecar)      │          │
 │  └──────────────┘              └────────┬─────────┘          │
-│                                         │ TCP 9997           │
+│                                         │ HTTP 8088          │
 │                                         ▼                    │
 │                               ┌──────────────────┐           │
 │                               │ Splunk Enterprise │           │
@@ -85,7 +85,7 @@
 | **Splunk Enterprise** | `splunk/splunk:9.1` | Central SIEM — log aggregation, dashboards, alerting |
 | **Apache + ModSecurity** | Custom Dockerfile | Target web app with WAF (OWASP CRS v3.3+) |
 | **Suricata NIDS** | `jasonish/suricata:6.0` | Network IDS with 11 custom detection rules |
-| **Splunk Forwarder** | `splunk/universalforwarder:9.1` | Log shipper (4 monitored sources) |
+| **HEC Watcher** | Custom Dockerfile | Real-time log sidecar (tails volumes -> HEC) |
 | **Attack Simulator** | Custom Dockerfile | Python-based 7-module adversary emulator |
 | **Webhook Receiver** | Custom Dockerfile | Flask mock SOAR endpoint |
 
@@ -112,10 +112,17 @@ cp .env.example .env
 
 ### 3. Build and Launch
 ```bash
-docker compose up -d --build
+docker compose up -d --build --remove-orphans
 ```
 
-### 4. Access the Services
+### 4. Wait for Healthcheck
+Splunk takes ~2-3 minutes to initialize. Check status with:
+```bash
+docker ps --format "table {{.Names}}\t{{.Status}}"
+```
+Wait until `soc-splunk` shows `(healthy)`.
+
+### 5. Access the Services
 
 | Service | URL | Credentials |
 |---|---|---|
@@ -123,26 +130,20 @@ docker compose up -d --build
 | Vulnerable Web App | http://localhost:8080 | — |
 | Webhook Receiver | http://localhost:5000 | — |
 
-### 5. Run the Attack Simulator
-```bash
-# The attacker container runs automatically, or trigger manually:
-docker compose run --rm attacker
-```
+### 6. Verification Steps (The "Happy Path")
 
-### 6. Push Logs (Fallback)
-If the Universal Forwarder has trouble seeing shared Docker volumes, use the HEC pusher:
-```bash
-# One-shot push
-python push_logs_to_splunk.py
-
-# Continuous watch mode (polls every 10s)
-python push_logs_to_splunk.py --watch
-```
-
-### 7. View Results
-1. Open Splunk at `http://localhost:8000`
-2. Navigate to **SOC Lab** app → **SOC Overview Dashboard**
-3. Watch real-time attack data populate the panels
+1.  **Generate a block**: Navigate to `http://localhost:8080/login.php` and enter `' OR 1=1 --` in the username. Hit Login. You should see a **403 Forbidden**.
+2.  **Verify in Splunk**: Login to Splunk (`admin` / password from `.env`). Go to **Search & Reporting**.
+3.  **Run Initial Search**: (Set time to "Last 15 minutes")
+    ```spl
+    index=soc
+    ```
+    You should see thousands of events.
+4.  **Confirm WAF Log**:
+    ```spl
+    index=soc sourcetype=apache:error 942100
+    ```
+    This confirms your manual SQLi attack was logged and ingested.
 
 ---
 
@@ -267,6 +268,10 @@ See [`docs/incident_playbook.md`](docs/incident_playbook.md) for:
 │   └── rules/
 │       └── custom.rules        # 11 custom detection rules
 │
+├── hec_watcher/
+│   ├── Dockerfile
+│   └── watcher.py              # Real-time volume tailing -> HEC
+│
 ├── splunk/
 │   ├── app.conf
 │   ├── inputs.conf
@@ -286,6 +291,28 @@ See [`docs/incident_playbook.md`](docs/incident_playbook.md) for:
 └── docs/
     ├── incident_playbook.md    # SOC response runbook
     └── screenshots/
+```
+
+---
+
+## 🛠️ Reconstruction & Troubleshooting
+
+### 1. Manual Index Creation (If needed)
+If the `soc` index is missing in Splunk, run this command:
+```bash
+docker exec -u splunk soc-splunk curl -sk -u "admin:YOUR_PASS" -X POST "https://localhost:8089/services/data/indexes" -d "name=soc"
+```
+
+### 2. Live Log Pushing
+The `hec-watcher` container tails logs in real-time. To see its activity:
+```bash
+docker logs -f soc-hec-watcher
+```
+
+### 3. Splunk Field Extraction Fix
+If you see raw logs but no `uri` or `src_ip` fields, run this to force a config reload:
+```bash
+docker exec -u splunk soc-splunk /opt/splunk/bin/splunk restart
 ```
 
 ---

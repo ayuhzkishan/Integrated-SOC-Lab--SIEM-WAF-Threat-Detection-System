@@ -33,6 +33,8 @@ services:
       - ./splunk/dashboards:/opt/splunk/etc/apps/soc_lab/local/data/ui/views
       - ./splunk/app.conf:/opt/splunk/etc/apps/soc_lab/default/app.conf
       - ./splunk/savedsearches.conf:/opt/splunk/etc/apps/soc_lab/local/savedsearches.conf
+      - ./splunk/props.conf:/opt/splunk/etc/apps/soc_lab/local/props.conf
+      - ./splunk/transforms.conf:/opt/splunk/etc/apps/soc_lab/local/transforms.conf
     networks:
       soc-net:
         ipv4_address: 172.20.0.10
@@ -62,6 +64,7 @@ services:
       soc-net:
         ipv4_address: 172.20.0.20
     restart: unless-stopped
+    # Apache writes directly into the named volumes above
 
   # =========================================
   # Suricata NIDS — Network Intrusion Detection
@@ -80,34 +83,32 @@ services:
       - ./suricata/rules:/var/lib/suricata/rules
       - suricata-logs:/var/log/suricata
     command: >
-      -i docker0
+      -i eth0
       --set vars.address-groups.HOME_NET="[172.20.0.0/16]"
     restart: unless-stopped
 
   # =========================================
-  # Splunk Universal Forwarder — Log Shipper
+  # HEC Watcher — Real-time Log Shipper
+  # Tails shared volumes and pushes to Splunk HEC every 5s
   # =========================================
-  forwarder:
-    image: splunk/universalforwarder:9.1
-    container_name: soc-forwarder
-    hostname: forwarder
+  hec-watcher:
+    build:
+      context: ./hec_watcher
+      dockerfile: Dockerfile
+    container_name: soc-hec-watcher
+    hostname: hec-watcher
     environment:
-      - SPLUNK_START_ARGS=${SPLUNK_START_ARGS}
-      - SPLUNK_PASSWORD=${SPLUNK_PASSWORD}
-      - SPLUNK_FORWARD_SERVER=splunk:9997
+      - HEC_URL=http://soc-splunk:8088/services/collector/event
+      - HEC_TOKEN=${SPLUNK_HEC_TOKEN}
+      - INTERVAL=5
     volumes:
-      - apache-logs:/var/log/apache2:ro
-      - modsec-logs:/var/log/modsec:ro
-      - suricata-logs:/var/log/suricata:ro
-      - ./splunk/inputs.conf:/opt/splunkforwarder/etc/system/local/inputs.conf:ro
-      - ./splunk/props.conf:/opt/splunkforwarder/etc/system/local/props.conf:ro
-      - ./splunk/transforms.conf:/opt/splunkforwarder/etc/system/local/transforms.conf:ro
+      - apache-logs:/logs/apache2:ro
+      - modsec-logs:/logs/modsec:ro
+      - suricata-logs:/logs/suricata:ro
     depends_on:
       splunk:
         condition: service_healthy
       web:
-        condition: service_started
-      suricata:
         condition: service_started
     networks:
       soc-net:
